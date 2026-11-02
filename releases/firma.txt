@@ -1,0 +1,3 @@
+Versión: 1.1.1
+Firmado con: llave de debug temporal
+V2 Signer: certificate SHA-256 digest: bea94d466592c0ab753281703ea43e4a12ef89e2cf2889fa7638e0a0b99122f3
