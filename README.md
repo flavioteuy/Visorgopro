@@ -40,12 +40,16 @@ El 133 es un fallo genérico de Android. La app ya reintenta sola 3 veces (cerra
 
 Para instalarlo en la TV: activa las opciones de desarrollador y la depuración por red, y usa `adb connect <IP-de-la-TV>` + `adb install VisorGoPro-1.1.1.apk` (o cualquier app de «enviar archivos a la TV»).
 
-## Firma
+## Firma (para poder actualizar sin desinstalar)
 
-`signing.properties` y `keystore/visorgopro.jks` firman el APK de release y **no se suben al repositorio** (están en `.gitignore`). Mantén siempre la misma llave para poder actualizar sobre la instalación anterior.
+Android solo instala una versión nueva encima de otra si ambas están firmadas con **la misma llave**. Por eso la llave de firma nunca se sube al repositorio (es público): `signing.properties` y `keystore/` están en `.gitignore`.
 
-- **Local:** deja esos dos archivos en la raíz del proyecto.
-- **GitHub Actions:** crea los secretos `KEYSTORE_BASE64` (el `.jks` en base64: `base64 -w0 keystore/visorgopro.jks`) y `KEYSTORE_PASSWORD`. Sin ellos el APK se firma con una llave de debug temporal distinta en cada ejecución, y habría que desinstalar la app antes de instalar la siguiente versión.
+- **GitHub Actions (lo habitual):** guarda la llave una sola vez como secretos del repositorio (*Settings → Secrets and variables → Actions*): `KEYSTORE_BASE64` (el `.jks` en base64: `base64 -w0 visorgopro.jks`) y `KEYSTORE_PASSWORD` (sirve para el almacén y para la llave; el alias es `visorgopro`). Con ellos todas las compilaciones salen con la misma firma y se instalan encima de la anterior.
+- **Sin secretos:** el APK se firma con una llave de debug temporal distinta en cada ejecución, y hay que desinstalar la app antes de instalar la siguiente versión.
+- **Cómo comprobarlo:** cada compilación guarda `releases/firma.txt` con la versión, el tipo de llave usada y la huella SHA-256 del certificado (es un dato público). Si la huella no cambia entre versiones, las actualizaciones se instalan encima.
+- **Local:** deja `signing.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) y `keystore/visorgopro.jks` en la raíz del proyecto.
+
+Guarda una copia del `.jks` y de su clave en un lugar privado: si se pierde, habrá que desinstalar la app una vez para firmar con una llave nueva.
 
 ## Notas técnicas
 

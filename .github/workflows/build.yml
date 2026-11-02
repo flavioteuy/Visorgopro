@@ -61,6 +61,19 @@ jobs:
           cp "$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)" "dist/VisorGoPro-${VERSION}.apk"
           ls -la dist
 
+      - name: Registrar la huella de la firma (dato público, no es secreto)
+        run: |
+          VERSION=$(grep 'val appVersionName' app/build.gradle.kts | sed 's/.*"\(.*\)".*/\1/')
+          if [ -f signing.properties ]; then ORIGEN="llave propia (secretos de GitHub)"; else ORIGEN="llave de debug temporal"; fi
+          APKSIGNER=$(ls -d "${ANDROID_HOME:-/usr/local/lib/android/sdk}"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -n 1 || true)
+          {
+            echo "Versión: ${VERSION}"
+            echo "Firmado con: ${ORIGEN}"
+            if [ -n "$APKSIGNER" ]; then
+              "$APKSIGNER" verify --print-certs "dist/VisorGoPro-${VERSION}.apk" 2>&1 | grep -i "SHA-256" || true
+            fi
+          } | tee dist/firma.txt
+
       - uses: actions/upload-artifact@v4
         with:
           name: VisorGoPro-apk
@@ -72,7 +85,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           mkdir -p releases
           rm -f releases/*.apk releases/build-error.log
-          cp dist/*.apk releases/
+          cp dist/*.apk dist/firma.txt releases/
           git add releases
           git commit -m "APK $(basename dist/*.apk)" || echo "Sin cambios"
           git push
