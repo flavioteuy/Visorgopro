@@ -40,7 +40,7 @@ El 133 es un fallo genérico de Android. La app ya reintenta sola 3 veces (cerra
 
 **En tu computadora:** abre la carpeta con Android Studio, o ejecuta `./gradlew assembleRelease` (JDK 17 + Android SDK 35). El APK queda en `app/build/outputs/apk/release/`.
 
-Para instalarlo en la TV: activa las opciones de desarrollador y la depuración por red, y usa `adb connect <IP-de-la-TV>` + `adb install VisorGoPro-1.1.2.apk` (o cualquier app de «enviar archivos a la TV»).
+Para instalarlo en la TV: activa las opciones de desarrollador y la depuración por red, y usa `adb connect <IP-de-la-TV>` + `adb install VisorGoPro-1.1.3.apk` (o cualquier app de «enviar archivos a la TV»).
 
 ## Firma (para poder actualizar sin desinstalar)
 

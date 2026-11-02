@@ -7,8 +7,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val appVersionName = "1.1.2"
-val appVersionCode = 4
+val appVersionName = "1.1.3"
+val appVersionCode = 5
 
 // Si existe signing.properties (en la raíz) se firma con esa llave; si no, con la de debug.
 val signingProps = Properties().apply {
