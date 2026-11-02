@@ -17,6 +17,15 @@ App para Google TV / Android TV que se conecta a una GoPro HERO12 Black usando l
 
 **A mano, modo «Red doméstica (COHN)»:** escribe la IP, el usuario y la contraseña de COHN de una cámara ya configurada.
 
+### Si da error de conexión Bluetooth (código 133)
+
+El 133 es un fallo genérico de Android. La app ya reintenta sola 3 veces (cerrando el intento anterior, esperando y, antes del último, olvidando un emparejamiento antiguo). Si aun así falla:
+
+1. Pon la cámara en modo de emparejamiento (desliza a la izquierda → Conexiones → Conectar dispositivo → GoPro Quik App) y no la tengas conectada a la app Quik del teléfono (la cámara solo acepta una conexión Bluetooth).
+2. Si «GoPro …» aparece en los ajustes Bluetooth de la TV (Ajustes → Control remoto y accesorios), elimínala de ahí.
+3. Si la cámara se restableció, en la GoPro: Preferencias → Conexiones → Restablecer conexiones.
+4. Vuelve a buscar y elige la cámara.
+
 ## Control remoto
 
 - Flechas / OK: navegar y elegir. Atrás: volver.
@@ -29,7 +38,7 @@ App para Google TV / Android TV que se conecta a una GoPro HERO12 Black usando l
 
 **En tu computadora:** abre la carpeta con Android Studio, o ejecuta `./gradlew assembleRelease` (JDK 17 + Android SDK 35). El APK queda en `app/build/outputs/apk/release/`.
 
-Para instalarlo en la TV: activa las opciones de desarrollador y la depuración por red, y usa `adb connect <IP-de-la-TV>` + `adb install VisorGoPro-1.1.0.apk` (o cualquier app de «enviar archivos a la TV»).
+Para instalarlo en la TV: activa las opciones de desarrollador y la depuración por red, y usa `adb connect <IP-de-la-TV>` + `adb install VisorGoPro-1.1.1.apk` (o cualquier app de «enviar archivos a la TV»).
 
 ## Firma
 

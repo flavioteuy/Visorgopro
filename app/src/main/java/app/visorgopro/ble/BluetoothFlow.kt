@@ -140,9 +140,8 @@ class BluetoothFlow(
             val b = GoProBle(app)
             try {
                 step("Conectando con ${cam.name}…")
-                b.connect(cam.address)
-                step("Leyendo los servicios de la cámara…")
-                b.discoverServices()
+                delay(700) // tras dejar de buscar, Android necesita un momento antes de conectar
+                b.connect(cam.device) { step(it) }
                 step("Emparejando… la primera vez la cámara debe estar en modo de emparejamiento.")
                 b.pair()
                 step("Activando las notificaciones…")
@@ -300,6 +299,11 @@ class BluetoothFlow(
         e.message == "bluetooth_off" ->
             "El Bluetooth de la TV está apagado. Actívalo en Ajustes → Control remoto y accesorios."
         e.message?.startsWith("scan_failed") == true -> "No pude buscar por Bluetooth (${e.message})."
+        e is BleConnectException ->
+            "${e.message}. Se probó 3 veces. Comprueba que la cámara esté encendida y en modo de emparejamiento " +
+                "(desliza a la izquierda → Conexiones → Conectar dispositivo → GoPro Quik App), que no esté " +
+                "conectada a otro teléfono o app, y si «GoPro…» aparece en Ajustes → Control remoto y accesorios " +
+                "de la TV, elimínala de ahí. Luego vuelve a buscar."
         e is TimeoutException ->
             (e.message ?: "Tiempo de espera agotado") +
                 ". Si ya habías emparejado esta cámara, olvídala en los ajustes Bluetooth de la TV y repite con la " +

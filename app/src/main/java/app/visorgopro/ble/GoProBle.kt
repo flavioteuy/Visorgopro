@@ -20,6 +20,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeoutException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
@@ -48,7 +49,20 @@ object GoProUuids {
     val NET_MGMT_RESP: UUID = gp("0092")
 }
 
-data class FoundCamera(val address: String, val name: String, val rssi: Int)
+data class FoundCamera(val address: String, val name: String, val rssi: Int, val device: BluetoothDevice)
+
+/** Fallo al abrir la conexión GATT; [status] es el código de Android (133 = fallo genérico de conexión). */
+class BleConnectException(val status: Int, message: String) : IOException(message)
+
+/** Nombre legible de los códigos de estado GATT más habituales. */
+fun gattStatusText(status: Int): String = when (status) {
+    8 -> "tiempo de conexión agotado"
+    19 -> "la cámara cerró la conexión"
+    22 -> "la TV cerró la conexión"
+    133 -> "fallo genérico de conexión"
+    257 -> "fallo de conexión"
+    else -> "error de conexión"
+}
 
 /** Busca cámaras GoPro cercanas (anuncian el servicio 0xFEA6 y su nombre empieza por «GoPro»). */
 @SuppressLint("MissingPermission")
@@ -64,7 +78,7 @@ fun scanGoPros(context: Context): Flow<FoundCamera> = callbackFlow {
             val name = result.scanRecord?.deviceName ?: result.device.name ?: ""
             val hasService = result.scanRecord?.serviceUuids?.any { it.uuid == GoProUuids.SERVICE_FEA6 } == true
             if (hasService || name.startsWith("GoPro", ignoreCase = true)) {
-                trySend(FoundCamera(result.device.address, name.ifBlank { "GoPro" }, result.rssi))
+                trySend(FoundCamera(result.device.address, name.ifBlank { "GoPro" }, result.rssi, result.device))
             }
         }
 
@@ -95,14 +109,19 @@ class GoProBle(private val context: Context) {
 
     private class GattResult(val status: Int, val value: ByteArray?)
 
+    private companion object {
+        const val CONNECT_ATTEMPTS = 3
+    }
+
     private var gatt: BluetoothGatt? = null
     private val opLock = Mutex()
 
     @Volatile
     private var pending: CompletableDeferred<GattResult>? = null
 
+    /** Callback vigente: los avisos de intentos anteriores (ya cerrados) se ignoran. */
     @Volatile
-    private var connecting: CompletableDeferred<Unit>? = null
+    private var active: GattCb? = null
     private val sinks = CopyOnWriteArrayList<Sink>()
     private val assemblers = ConcurrentHashMap<UUID, Assembler>()
     private val subscribed = ConcurrentHashMap.newKeySet<UUID>()
@@ -112,24 +131,29 @@ class GoProBle(private val context: Context) {
 
     // ------------------------------------------------------------------ Callbacks de Android
 
-    private val callback = object : BluetoothGattCallback() {
+    private inner class GattCb(private val attempt: CompletableDeferred<Unit>) : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            if (active !== this) return
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
-                connecting?.complete(Unit)
+                attempt.complete(Unit)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
                 disconnected.value = true
-                connecting?.completeExceptionally(IOException("No se pudo conectar por Bluetooth (código $status)"))
-                pending?.complete(GattResult(-1, null))
+                attempt.completeExceptionally(
+                    BleConnectException(status, "No se pudo conectar por Bluetooth (código $status: ${gattStatusText(status)})")
+                )
+                pending?.complete(GattResult(if (status == BluetoothGatt.GATT_SUCCESS) -1 else status, null))
             }
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            if (active !== this) return
             pending?.complete(GattResult(status, null))
         }
 
         @Deprecated("Deprecated in Java")
         @Suppress("DEPRECATION")
         override fun onCharacteristicRead(g: BluetoothGatt, ch: BluetoothGattCharacteristic, status: Int) {
+            if (active !== this) return
             pending?.complete(GattResult(status, ch.value))
         }
 
@@ -139,25 +163,30 @@ class GoProBle(private val context: Context) {
             value: ByteArray,
             status: Int,
         ) {
+            if (active !== this) return
             pending?.complete(GattResult(status, value))
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, ch: BluetoothGattCharacteristic, status: Int) {
+            if (active !== this) return
             pending?.complete(GattResult(status, null))
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
+            if (active !== this) return
             pending?.complete(GattResult(status, null))
         }
 
         @Deprecated("Deprecated in Java")
         @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic) {
+            if (active !== this) return
             val v = ch.value ?: return
             onNotify(ch.uuid, v)
         }
 
         override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic, value: ByteArray) {
+            if (active !== this) return
             onNotify(ch.uuid, value)
         }
     }
@@ -202,28 +231,71 @@ class GoProBle(private val context: Context) {
 
     // ------------------------------------------------------------------ Conexión
 
-    suspend fun connect(address: String) {
-        val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
-            ?: throw IllegalStateException("bluetooth_off")
-        val device = adapter.getRemoteDevice(address)
-        val d = CompletableDeferred<Unit>()
-        connecting = d
-        disconnected.value = false
-        gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
-        try {
-            withTimeoutOrNull(20_000) { d.await() }
-                ?: throw TimeoutException("La cámara no respondió por Bluetooth")
-        } catch (e: Exception) {
-            close()
-            throw e
+    /**
+     * Abre la conexión GATT y lee los servicios de la cámara. El error 133 de Android es un fallo genérico y a menudo pasajero, así que se reintenta:
+     * se cierra del todo el intento fallido, se espera un poco y se vuelve a probar (el último intento usa
+     * autoConnect, que en algunos equipos conecta cuando la conexión directa falla). Si el equipo conserva un
+     * emparejamiento antiguo con la cámara, se olvida antes del último intento.
+     */
+    suspend fun connect(device: BluetoothDevice, onProgress: (String) -> Unit = {}) {
+        var lastError: Exception? = null
+        for (attempt in 1..CONNECT_ATTEMPTS) {
+            val last = attempt == CONNECT_ATTEMPTS
+            if (attempt > 1) onProgress("Reintentando la conexión (intento $attempt de $CONNECT_ATTEMPTS)…")
+            try {
+                connectOnce(device, autoConnect = last, timeoutMs = if (last) 25_000 else 12_000)
+                delay(600) // deja que la conexión se estabilice antes de pedir los servicios
+                onProgress("Leyendo los servicios de la cámara…")
+                discoverServices()
+                return
+            } catch (e: CancellationException) {
+                close()
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                close()
+                if (last) break
+                delay(1_500)
+                if (attempt == CONNECT_ATTEMPTS - 1 && forgetBond(device)) {
+                    onProgress("Olvidando un emparejamiento antiguo con la cámara…")
+                    delay(1_000)
+                }
+            }
         }
+        throw lastError ?: IOException("No se pudo conectar por Bluetooth")
     }
 
-    suspend fun discoverServices() {
+    private suspend fun connectOnce(device: BluetoothDevice, autoConnect: Boolean, timeoutMs: Long) {
+        val d = CompletableDeferred<Unit>()
+        val cb = GattCb(d)
+        active = cb
+        disconnected.value = false
+        gatt = device.connectGatt(
+            context,
+            autoConnect,
+            cb,
+            BluetoothDevice.TRANSPORT_LE,
+            BluetoothDevice.PHY_LE_1M_MASK,
+        ) ?: throw IOException("Android no pudo iniciar la conexión Bluetooth")
+        withTimeoutOrNull(timeoutMs) { d.await() }
+            ?: throw TimeoutException("La cámara no respondió por Bluetooth")
+    }
+
+    /** Si la TV tiene un emparejamiento previo con la cámara lo borra (si la cámara se restableció, queda obsoleto). */
+    private fun forgetBond(device: BluetoothDevice): Boolean {
+        if (device.bondState == BluetoothDevice.BOND_NONE) return false
+        return runCatching { device.javaClass.getMethod("removeBond").invoke(device) as? Boolean }
+            .getOrNull() == true
+    }
+
+    private suspend fun discoverServices() {
         val g = gatt ?: throw IOException("Sin conexión Bluetooth")
         val r = gattOp(15_000) { g.discoverServices() }
         if (r.status != BluetoothGatt.GATT_SUCCESS) {
-            throw IOException("No se pudieron leer los servicios de la cámara (código ${r.status})")
+            throw BleConnectException(
+                r.status,
+                "No se pudieron leer los servicios de la cámara (código ${r.status}: ${gattStatusText(r.status)})",
+            )
         }
     }
 
@@ -280,6 +352,7 @@ class GoProBle(private val context: Context) {
     }
 
     fun close() {
+        active = null
         sinks.forEach { it.channel.close() }
         sinks.clear()
         runCatching { gatt?.disconnect() }
