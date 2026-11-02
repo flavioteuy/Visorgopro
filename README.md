@@ -8,9 +8,14 @@ App para Google TV / Android TV que se conecta a una GoPro HERO12 Black usando l
 
 ## Cómo conectar
 
-**Modo «WiFi de la cámara»** (el más simple): en la GoPro, desliza a la izquierda → Conexiones → Conectar dispositivo → GoPro Quik App; luego conecta la TV a esa red WiFi desde los ajustes de la TV y abre la app. (Durante ese tiempo la TV no tiene internet; si tu TV tiene Ethernet, la app fuerza su tráfico por el WiFi de la cámara.)
+**Por Bluetooth (recomendado):** pulsa «Conectar por Bluetooth». La app busca la cámara, la empareja (la primera vez, ponla en modo de emparejamiento: desliza a la izquierda → Conexiones → Conectar dispositivo → GoPro Quik App) y ofrece dos caminos:
 
-**Modo «Red doméstica (COHN)»**: la cámara y la TV en tu misma WiFi. Requiere haber configurado antes en la cámara «Camera on the Home Network» (se hace por Bluetooth, p. ej. con el SDK de Open GoPro) y copiar aquí IP, usuario y contraseña. La app todavía **no** hace ese emparejamiento por Bluetooth.
+- **Usar el WiFi de la cámara:** enciende el WiFi de la cámara, lee su nombre y clave y une la TV a esa red (Android pide confirmación). Si la TV no puede hacerlo sola, la app muestra el nombre y la clave para que la conectes a mano desde los ajustes de la TV. Mientras tanto la TV no tiene internet.
+- **Configurar red doméstica (COHN):** escribes el WiFi de tu casa, la cámara se conecta a él y la app crea el acceso seguro (COHN). Se hace una sola vez: después, en el modo «Red doméstica», basta con pulsar Conectar (la IP y las credenciales quedan guardadas) y la TV conserva internet.
+
+**A mano, modo «WiFi de la cámara»:** en la GoPro, desliza a la izquierda → Conexiones → Conectar dispositivo → GoPro Quik App; luego conecta la TV a esa red WiFi desde los ajustes de la TV y abre la app. (Si tu TV tiene Ethernet, la app fuerza su tráfico por el WiFi de la cámara.)
+
+**A mano, modo «Red doméstica (COHN)»:** escribe la IP, el usuario y la contraseña de COHN de una cámara ya configurada.
 
 ## Control remoto
 
@@ -20,11 +25,11 @@ App para Google TV / Android TV que se conecta a una GoPro HERO12 Black usando l
 
 ## Compilar el APK
 
-**En la nube (sin instalar nada):** sube esta carpeta a un repositorio **privado** de GitHub (incluye la llave de firma). La acción *Compilar APK* se ejecuta sola en cada push y deja `VisorGoPro-<versión>.apk` en *Actions → la ejecución → Artifacts*.
+**En la nube (sin instalar nada):** la acción *Compilar APK* se ejecuta sola en cada push a `main`, deja `VisorGoPro-<versión>.apk` en la carpeta `releases/` del repositorio y también como artefacto de la ejecución. Si falla, el resumen del error queda en `releases/build-error.log`.
 
 **En tu computadora:** abre la carpeta con Android Studio, o ejecuta `./gradlew assembleRelease` (JDK 17 + Android SDK 35). El APK queda en `app/build/outputs/apk/release/`.
 
-Para instalarlo en la TV: activa las opciones de desarrollador y la depuración por red, y usa `adb connect <IP-de-la-TV>` + `adb install VisorGoPro-1.0.0.apk` (o cualquier app de «enviar archivos a la TV»).
+Para instalarlo en la TV: activa las opciones de desarrollador y la depuración por red, y usa `adb connect <IP-de-la-TV>` + `adb install VisorGoPro-1.1.0.apk` (o cualquier app de «enviar archivos a la TV»).
 
 ## Firma
 
@@ -36,4 +41,6 @@ Para instalarlo en la TV: activa las opciones de desarrollador y la depuración 
 ## Notas técnicas
 
 - Endpoints usados (Open GoPro): `gopro/camera/info`, `state`, `keep_alive`, `shutter/start|stop`, `setting?setting=&option=`, `presets/get`, `presets/load?id=`, `stream/start?port=8554`, `stream/stop`, `gopro/media/list`, `media/thumbnail`, `media/screennail`, y `videos/DCIM/<carpeta>/<archivo>`.
+- Bluetooth LE (Open GoPro): servicio `0xFEA6`; comandos en `b5f90072/73`, consultas en `b5f90076/77` y gestión de red en `b5f90091/92`; el emparejamiento se dispara leyendo la clave del WiFi (`b5f90003`). Mensajes protobuf mínimos escritos a mano (sin librería) para `RequestConnectNew`, `RequestGetCOHNStatus`, `RequestCreateCOHNCert` y `RequestClearCOHNCert`.
+- Con COHN la app confía en el certificado autofirmado de la cámara sin validarlo, y solo para la IP configurada (red doméstica).
 - Kotlin + Jetpack Compose, Media3 (ExoPlayer) y OkHttp. `minSdk 26`.

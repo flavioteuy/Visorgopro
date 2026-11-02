@@ -40,7 +40,19 @@ jobs:
       - name: Compilar APK
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleRelease --no-daemon
+          set -o pipefail
+          ./gradlew assembleRelease --no-daemon 2>&1 | tee build.log
+
+      - name: Guardar el error de compilación en el repositorio
+        if: failure()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p releases
+          { grep -nE "^e: |error:|FAILED|What went wrong" -A4 build.log | head -200; } > releases/build-error.log || true
+          git add releases/build-error.log
+          git commit -m "Registro del error de compilación" || true
+          git push || true
 
       - name: Nombrar el APK con la versión
         run: |
@@ -59,7 +71,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           mkdir -p releases
-          rm -f releases/*.apk
+          rm -f releases/*.apk releases/build-error.log
           cp dist/*.apk releases/
           git add releases
           git commit -m "APK $(basename dist/*.apk)" || echo "Sin cambios"

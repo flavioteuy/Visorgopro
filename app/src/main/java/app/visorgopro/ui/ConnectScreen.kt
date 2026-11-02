@@ -32,7 +32,8 @@ import app.visorgopro.net.ConnMode
 @Composable
 fun ConnectScreen(vm: AppVm) {
     val connectFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { connectFocus.requestFocus() } }
+    val btFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { btFocus.requestFocus() } }
 
     Column(
         Modifier
@@ -48,6 +49,20 @@ fun ConnectScreen(vm: AppVm) {
             fontSize = 18.sp,
         )
         Spacer(Modifier.height(6.dp))
+
+        FocusButton(
+            text = "Conectar por Bluetooth (recomendado)",
+            onClick = { vm.openBluetooth() },
+            focusRequester = btFocus,
+        )
+        Text(
+            "Busca y empareja la cámara y se encarga del WiFi por ti. También permite configurar la red doméstica.",
+            color = TextDim,
+            fontSize = 16.sp,
+            modifier = Modifier.widthIn(max = 900.dp),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text("O conecta a mano:", color = TextDim, fontSize = 16.sp)
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             FocusButton(
@@ -75,8 +90,9 @@ fun ConnectScreen(vm: AppVm) {
             )
         } else {
             Text(
-                "Requiere que la cámara ya esté configurada como «Camera on the Home Network» (COHN) en tu WiFi. " +
-                    "Escribe la IP que tiene en tu red y las credenciales de COHN.",
+                "Requiere que la cámara ya esté configurada como «Camera on the Home Network» (COHN) en tu WiFi; " +
+                    "se hace una vez con el botón de Bluetooth. Después se guardan la IP y las credenciales y basta " +
+                    "con pulsar Conectar.",
                 color = TextDim,
                 fontSize = 17.sp,
                 modifier = Modifier.widthIn(max = 900.dp),

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import app.visorgopro.ui.AppTheme
 import app.visorgopro.ui.Bg
+import app.visorgopro.ui.BluetoothScreen
 import app.visorgopro.ui.ConnectScreen
 import app.visorgopro.ui.DashboardScreen
 import app.visorgopro.ui.GalleryScreen
@@ -32,6 +33,7 @@ class MainActivity : ComponentActivity() {
                     BackHandler(enabled = vm.screen != Screen.Connect) { vm.back() }
                     when (val s = vm.screen) {
                         Screen.Connect -> ConnectScreen(vm)
+                        Screen.Bluetooth -> BluetoothScreen(vm)
                         Screen.Dashboard -> DashboardScreen(vm)
                         Screen.Live -> LiveScreen(vm)
                         Screen.Gallery -> GalleryScreen(vm)
