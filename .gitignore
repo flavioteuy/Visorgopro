@@ -1,0 +1,11 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+# Credenciales de firma: nunca se suben al repositorio (en CI llegan por secretos de GitHub)
+signing.properties
+keystore/

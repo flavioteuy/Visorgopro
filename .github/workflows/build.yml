@@ -1,0 +1,50 @@
+name: Compilar APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Preparar la firma (si hay llave en los secretos)
+        env:
+          KS_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            mkdir -p keystore
+            echo "$KS_B64" | base64 -d > keystore/visorgopro.jks
+            printf 'storeFile=keystore/visorgopro.jks\nstorePassword=%s\nkeyAlias=visorgopro\nkeyPassword=%s\n' "$KS_PASS" "$KS_PASS" > signing.properties
+            echo "Firmando con la llave guardada en los secretos."
+          else
+            echo "Sin llave en los secretos: se firma con la llave de debug (temporal)."
+          fi
+
+      - name: Compilar APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Nombrar el APK con la versión
+        run: |
+          VERSION=$(grep 'val appVersionName' app/build.gradle.kts | sed 's/.*"\(.*\)".*/\1/')
+          mkdir -p dist
+          cp "$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)" "dist/VisorGoPro-${VERSION}.apk"
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VisorGoPro-apk
+          path: dist/*.apk
