@@ -3,7 +3,12 @@ name: Compilar APK
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'releases/**'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -48,3 +53,14 @@ jobs:
         with:
           name: VisorGoPro-apk
           path: dist/*.apk
+
+      - name: Guardar el último APK en el repositorio (carpeta releases)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p releases
+          rm -f releases/*.apk
+          cp dist/*.apk releases/
+          git add releases
+          git commit -m "APK $(basename dist/*.apk)" || echo "Sin cambios"
+          git push
