@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiManager
 import android.net.wifi.WifiNetworkSpecifier
 import android.os.Build
 import androidx.annotation.RequiresApi
@@ -20,7 +21,12 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 class WifiLink(context: Context) {
     private val cm: ConnectivityManager =
         context.applicationContext.getSystemService(ConnectivityManager::class.java)
+    private val wifiManager: WifiManager? =
+        context.applicationContext.getSystemService(WifiManager::class.java)
     private var callback: ConnectivityManager.NetworkCallback? = null
+
+    /** True si el WiFi de la TV está encendido. Con cable de red, muchas TV no dejan encenderlo. */
+    fun wifiOn(): Boolean = runCatching { wifiManager?.isWifiEnabled == true }.getOrDefault(false)
 
     @RequiresApi(Build.VERSION_CODES.Q)
     suspend fun connect(ssid: String, password: String, timeoutMs: Int = 45_000): Network {

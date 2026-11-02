@@ -96,29 +96,48 @@ fun BluetoothScreen(vm: AppVm) {
             }
 
             BtStage.Ready -> {
+                // Con la TV por cable el WiFi suele estar apagado y no se puede encender: solo sirve la red doméstica
+                val wifiOff = remember(bt.stage) { !vm.wifiLink.wifiOn() }
                 Text("Conectada por Bluetooth: ${bt.cameraName}", color = Accent, fontSize = 22.sp)
-                FocusButton("Usar el WiFi de la cámara", onClick = { bt.useCameraWifi() }, focusRequester = first)
-                Text(
-                    "Enciende el WiFi de la cámara y une la TV a él. Android pedirá confirmación. " +
-                        "Mientras tanto, la TV no tiene internet.",
-                    color = TextDim,
-                    fontSize = 16.sp,
-                    modifier = Modifier.widthIn(max = 900.dp),
-                )
-                FocusButton("Configurar red doméstica (COHN)", onClick = { bt.openHomeForm() })
-                Text(
-                    "La cámara se conecta a tu WiFi de casa y la TV la usa por la red, sin perder internet. " +
-                        "Se hace una sola vez; después basta con «Conectar» en el modo de red doméstica.",
-                    color = TextDim,
-                    fontSize = 16.sp,
-                    modifier = Modifier.widthIn(max = 900.dp),
-                )
+                if (wifiOff) {
+                    Text(
+                        "El WiFi de esta TV está apagado (con cable de red no se puede encender), así que no puedo " +
+                            "unirla al WiFi de la cámara. Usa la red doméstica: la cámara se conecta al WiFi de tu " +
+                            "router y la TV, por cable, a ese mismo router.",
+                        color = TextDim,
+                        fontSize = 17.sp,
+                        modifier = Modifier.widthIn(max = 900.dp),
+                    )
+                    FocusButton(
+                        "Configurar red doméstica (COHN)",
+                        onClick = { bt.openHomeForm() },
+                        focusRequester = first,
+                    )
+                } else {
+                    FocusButton("Usar el WiFi de la cámara", onClick = { bt.useCameraWifi() }, focusRequester = first)
+                    Text(
+                        "Enciende el WiFi de la cámara y une la TV a él. Android pedirá confirmación. " +
+                            "Mientras tanto, la TV no tiene internet.",
+                        color = TextDim,
+                        fontSize = 16.sp,
+                        modifier = Modifier.widthIn(max = 900.dp),
+                    )
+                    FocusButton("Configurar red doméstica (COHN)", onClick = { bt.openHomeForm() })
+                    Text(
+                        "La cámara se conecta a tu WiFi de casa y la TV la usa por la red, sin perder internet. " +
+                            "Se hace una sola vez; después basta con «Conectar» en el modo de red doméstica.",
+                        color = TextDim,
+                        fontSize = 16.sp,
+                        modifier = Modifier.widthIn(max = 900.dp),
+                    )
+                }
                 FocusButton("Cerrar Bluetooth", onClick = { vm.back() })
             }
 
             BtStage.HomeForm -> {
                 Text(
-                    "Escribe los datos de tu WiFi de casa (el mismo de la TV). La clave no se guarda.",
+                    "Escribe los datos del WiFi de tu router (la cámara se conecta a él; la TV, por WiFi o por cable, debe estar " +
+                        "en el mismo router). Mejor la banda de 2,4 GHz. La clave no se guarda.",
                     color = TextDim,
                     fontSize = 17.sp,
                     modifier = Modifier.widthIn(max = 900.dp),

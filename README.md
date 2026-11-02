@@ -13,6 +13,8 @@ App para Google TV / Android TV que se conecta a una GoPro HERO12 Black usando l
 - **Usar el WiFi de la cámara:** enciende el WiFi de la cámara, lee su nombre y clave y une la TV a esa red (Android pide confirmación). Si la TV no puede hacerlo sola, la app muestra el nombre y la clave para que la conectes a mano desde los ajustes de la TV. Mientras tanto la TV no tiene internet.
 - **Configurar red doméstica (COHN):** escribes el WiFi de tu casa, la cámara se conecta a él y la app crea el acceso seguro (COHN). Se hace una sola vez: después, en el modo «Red doméstica», basta con pulsar Conectar (la IP y las credenciales quedan guardadas) y la TV conserva internet.
 
+**Si tu TV está por cable (Ethernet) y no te deja encender el WiFi:** usa «Conectar por Bluetooth» → «Configurar red doméstica (COHN)». La cámara se une al WiFi de tu router y la TV, por cable, está en ese mismo router, así que no hace falta que la TV tenga WiFi. La app lo detecta y muestra solo esa opción.
+
 **A mano, modo «WiFi de la cámara»:** en la GoPro, desliza a la izquierda → Conexiones → Conectar dispositivo → GoPro Quik App; luego conecta la TV a esa red WiFi desde los ajustes de la TV y abre la app. (Si tu TV tiene Ethernet, la app fuerza su tráfico por el WiFi de la cámara.)
 
 **A mano, modo «Red doméstica (COHN)»:** escribe la IP, el usuario y la contraseña de COHN de una cámara ya configurada.
@@ -38,7 +40,7 @@ El 133 es un fallo genérico de Android. La app ya reintenta sola 3 veces (cerra
 
 **En tu computadora:** abre la carpeta con Android Studio, o ejecuta `./gradlew assembleRelease` (JDK 17 + Android SDK 35). El APK queda en `app/build/outputs/apk/release/`.
 
-Para instalarlo en la TV: activa las opciones de desarrollador y la depuración por red, y usa `adb connect <IP-de-la-TV>` + `adb install VisorGoPro-1.1.1.apk` (o cualquier app de «enviar archivos a la TV»).
+Para instalarlo en la TV: activa las opciones de desarrollador y la depuración por red, y usa `adb connect <IP-de-la-TV>` + `adb install VisorGoPro-1.1.2.apk` (o cualquier app de «enviar archivos a la TV»).
 
 ## Firma (para poder actualizar sin desinstalar)
 

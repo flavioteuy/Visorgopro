@@ -56,7 +56,8 @@ fun ConnectScreen(vm: AppVm) {
             focusRequester = btFocus,
         )
         Text(
-            "Busca y empareja la cámara y se encarga del WiFi por ti. También permite configurar la red doméstica.",
+            "Busca y empareja la cámara y se encarga del WiFi por ti. Si tu TV va por cable y no puede encender el WiFi, " +
+                "usa esta opción y elige «Configurar red doméstica».",
             color = TextDim,
             fontSize = 16.sp,
             modifier = Modifier.widthIn(max = 900.dp),

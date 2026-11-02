@@ -184,6 +184,11 @@ class BluetoothFlow(
 
     fun useCameraWifi() {
         val b = ble ?: return
+        if (!vm.wifiLink.wifiOn()) {
+            error = "El WiFi de la TV está apagado (con cable de red no se puede encender). " +
+                "Usa «Configurar red doméstica (COHN)»."
+            return
+        }
         error = null
         log = emptyList()
         stage = BtStage.Working
