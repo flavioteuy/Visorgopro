@@ -275,6 +275,19 @@ class AppVm(private val app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun syncTime() {
+        val c = client ?: return
+        message = null
+        viewModelScope.launch {
+            try {
+                c.setDateTime()
+                say("Fecha y hora de la cámara actualizadas con las de la TV.")
+            } catch (e: Exception) {
+                say(settingError(e), true)
+            }
+        }
+    }
+
     fun applyPreset(preset: Preset) {
         val c = client ?: return
         message = null

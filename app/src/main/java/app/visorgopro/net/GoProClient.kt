@@ -95,6 +95,16 @@ class GoProClient(val config: Config) {
         )
     }
 
+    /** Pone la fecha y hora de la cámara con las de la TV (GET gopro/camera/set_date_time). */
+    suspend fun setDateTime(now: java.util.Date = java.util.Date()) {
+        val tz = java.util.TimeZone.getDefault()
+        val cal = java.util.Calendar.getInstance(tz).apply { time = now }
+        val date = "${cal[java.util.Calendar.YEAR]}_${cal[java.util.Calendar.MONTH] + 1}_${cal[java.util.Calendar.DAY_OF_MONTH]}"
+        val time = "${cal[java.util.Calendar.HOUR_OF_DAY]}_${cal[java.util.Calendar.MINUTE]}_${cal[java.util.Calendar.SECOND]}"
+        val dst = if (tz.inDaylightTime(now)) 1 else 0
+        getJson("gopro/camera/set_date_time?date=$date&time=$time&tzone=${tz.rawOffset / 60000}&dst=$dst")
+    }
+
     suspend fun keepAlive() {
         getJson("gopro/camera/keep_alive")
     }

@@ -4,7 +4,7 @@ App para Google TV / Android TV que se conecta a una GoPro HERO12 Black usando l
 
 - **Galería:** ver los videos y fotos guardados en la tarjeta de la cámara (miniaturas, reproducción por streaming, visor de fotos).
 - **Vista en vivo:** vista previa en directo (MPEG-TS por UDP) con botón para grabar / disparar.
-- **Configuración:** cambiar el modo de captura (presets), resolución, FPS, lente, HyperSmooth y anti parpadeo.
+- **Configuración:** modo de captura (presets) y ajustes agrupados en Video (resolución, FPS, aspecto, lente, HyperSmooth, rendimiento, tasa de bits, profundidad y perfil de color, HindSight, anti parpadeo), Foto (salida, lente) y Cámara (controles, apagado automático, protector de pantalla, LED, pitidos, GPS), más sincronizar la fecha y hora de la cámara con la TV. Los identificadores salen de la especificación oficial Open GoPro.
 
 ## Cómo conectar
 
@@ -31,7 +31,7 @@ El 133 es un fallo genérico de Android. La app ya reintenta sola 3 veces (cerra
 ## Control remoto
 
 - Flechas / OK: navegar y elegir. Atrás: volver.
-- En un video: **Menú** alterna entre el original y la versión ligera (LRV). Si la TV no puede decodificar el original (por ejemplo 5.3K), la app cambia sola a la versión ligera.
+- En un video: **OK** pausa/reanuda, **◀ ▶** saltan 10 s (mantén pulsado para saltar más), **▲ ▼** muestran los controles y **Menú** alterna entre el original y la versión ligera (LRV). Si la TV no puede decodificar el original (por ejemplo 5.3K), la app cambia sola a la versión ligera.
 - En una foto: ◀ ▶ para pasar de foto.
 
 ## Compilar el APK
@@ -40,7 +40,7 @@ El 133 es un fallo genérico de Android. La app ya reintenta sola 3 veces (cerra
 
 **En tu computadora:** abre la carpeta con Android Studio, o ejecuta `./gradlew assembleRelease` (JDK 17 + Android SDK 35). El APK queda en `app/build/outputs/apk/release/`.
 
-Para instalarlo en la TV: activa las opciones de desarrollador y la depuración por red, y usa `adb connect <IP-de-la-TV>` + `adb install VisorGoPro-1.1.3.apk` (o cualquier app de «enviar archivos a la TV»).
+Para instalarlo en la TV: activa las opciones de desarrollador y la depuración por red, y usa `adb connect <IP-de-la-TV>` + `adb install VisorGoPro-1.2.0.apk` (o cualquier app de «enviar archivos a la TV»).
 
 ## Firma (para poder actualizar sin desinstalar)
 
@@ -53,7 +53,13 @@ Android solo instala una versión nueva encima de otra si ambas están firmadas 
 
 Guarda una copia del `.jks` y de su clave en un lugar privado: si se pierde, habrá que desinstalar la app una vez para firmar con una llave nueva.
 
+## Vista en vivo: diagnóstico
+
+Mientras no hay imagen, la pantalla muestra una línea de diagnóstico: KB recibidos por UDP, estado del reproductor, formato de video y el error si lo hay. Si los KB se quedan en 0, la cámara no está enviando datos a la TV; si suben pero no hay imagen, el problema es el formato/decodificación. La app reintenta sola (detiene y vuelve a pedir la transmisión).
+
 ## Notas técnicas
+
+- La tipografía es Poppins (licencia SIL OFL, en `licenses/Poppins-OFL.txt`).
 
 - Endpoints usados (Open GoPro): `gopro/camera/info`, `state`, `keep_alive`, `shutter/start|stop`, `setting?setting=&option=`, `presets/get`, `presets/load?id=`, `stream/start?port=8554`, `stream/stop`, `gopro/media/list`, `media/thumbnail`, `media/screennail`, y `videos/DCIM/<carpeta>/<archivo>`.
 - Bluetooth LE (Open GoPro): servicio `0xFEA6`; comandos en `b5f90072/73`, consultas en `b5f90076/77` y gestión de red en `b5f90091/92`; el emparejamiento se dispara leyendo la clave del WiFi (`b5f90003`). Mensajes protobuf mínimos escritos a mano (sin librería) para `RequestConnectNew`, `RequestGetCOHNStatus`, `RequestCreateCOHNCert` y `RequestClearCOHNCert`.

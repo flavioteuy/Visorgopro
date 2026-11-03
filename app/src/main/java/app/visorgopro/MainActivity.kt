@@ -6,12 +6,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
+import app.visorgopro.ui.AppBackground
 import app.visorgopro.ui.AppTheme
-import app.visorgopro.ui.Bg
 import app.visorgopro.ui.BluetoothScreen
 import app.visorgopro.ui.ConnectScreen
 import app.visorgopro.ui.DashboardScreen
@@ -29,7 +27,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             AppTheme {
-                Box(Modifier.fillMaxSize().background(Bg)) {
+                AppBackground(Modifier.fillMaxSize()) {
                     BackHandler(enabled = vm.screen != Screen.Connect) { vm.back() }
                     when (val s = vm.screen) {
                         Screen.Connect -> ConnectScreen(vm)
