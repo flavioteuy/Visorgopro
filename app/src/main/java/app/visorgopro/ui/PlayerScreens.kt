@@ -1,7 +1,6 @@
 package app.visorgopro.ui
 
 import android.graphics.Bitmap
-import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -19,12 +18,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.media3.datasource.DataSpec
-import androidx.media3.datasource.TransferListener
 import androidx.media3.exoplayer.SeekParameters
-import java.util.concurrent.atomic.AtomicLong
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.isActive
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,7 +42,6 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -58,23 +51,14 @@ import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
-import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DataSource
-import androidx.media3.datasource.UdpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
-import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.exoplayer.source.MediaSource
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.extractor.DefaultExtractorsFactory
-import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.ui.PlayerView
 import app.visorgopro.AppVm
 import app.visorgopro.net.ImageLoader
 import app.visorgopro.net.MediaItem
-import app.visorgopro.net.friendlyError
 import kotlinx.coroutines.delay
 import androidx.media3.common.MediaItem as ExoMediaItem
 
@@ -442,350 +426,5 @@ fun PhotoScreen(vm: AppVm, item: MediaItem) {
                 .background(Color(0x99000000))
                 .padding(horizontal = 12.dp, vertical = 6.dp),
         )
-    }
-}
-
-// ====================================================================== Vista en vivo
-
-private fun stateName(state: Int): String = when (state) {
-    Player.STATE_IDLE -> "inactivo"
-    Player.STATE_BUFFERING -> "cargando"
-    Player.STATE_READY -> "listo"
-    Player.STATE_ENDED -> "terminado"
-    else -> "?"
-}
-
-/**
- * Mira por encima el flujo MPEG-TS que llega por UDP (tabla PAT/PMT) para saber qué trae la cámara: códec de video y
- * de audio. Solo sirve para el diagnóstico en pantalla; la imagen la decodifica ExoPlayer.
- */
-private class TsProbe {
-    val bytes = AtomicLong(0L)
-
-    private val acc = ByteArray(8192)
-    private var len = 0
-    private var pmtPid = -1
-    private val streamTypes = LinkedHashMap<Int, Int>()
-    private var tsPackets = 0L
-    private var badSync = 0L
-
-    @Volatile
-    private var firstByte = -1
-
-    @Synchronized
-    fun feed(data: ByteArray, offset: Int, n: Int) {
-        bytes.addAndGet(n.toLong())
-        if (firstByte < 0) firstByte = data[offset].toInt() and 0xFF
-        var src = offset
-        var left = n
-        while (left > 0) {
-            val take = minOf(left, acc.size - len)
-            System.arraycopy(data, src, acc, len, take)
-            len += take
-            src += take
-            left -= take
-            var pos = 0
-            while (len - pos >= 188) {
-                if ((acc[pos].toInt() and 0xFF) != 0x47) {
-                    badSync++
-                    pos++
-                    continue
-                }
-                packet(pos)
-                tsPackets++
-                pos += 188
-            }
-            if (pos > 0) {
-                System.arraycopy(acc, pos, acc, 0, len - pos)
-                len -= pos
-            }
-        }
-    }
-
-    private fun packet(o: Int) {
-        val pid = ((acc[o + 1].toInt() and 0x1F) shl 8) or (acc[o + 2].toInt() and 0xFF)
-        val pusi = (acc[o + 1].toInt() and 0x40) != 0
-        val afc = (acc[o + 3].toInt() shr 4) and 3
-        if (!pusi || (afc and 1) == 0) return
-        var p = o + 4
-        if ((afc and 2) != 0) p += 1 + (acc[o + 4].toInt() and 0xFF)
-        if (p >= o + 188) return
-        val s = p + 1 + (acc[p].toInt() and 0xFF) // salta el pointer_field
-        if (s + 12 > o + 188) return
-        val sectionLen = ((acc[s + 1].toInt() and 0x0F) shl 8) or (acc[s + 2].toInt() and 0xFF)
-        val end = minOf(s + 3 + sectionLen - 4, o + 188)
-        if (pid == 0 && acc[s].toInt() == 0) {
-            var e = s + 8
-            while (e + 4 <= end) {
-                val program = ((acc[e].toInt() and 0xFF) shl 8) or (acc[e + 1].toInt() and 0xFF)
-                if (program != 0) {
-                    pmtPid = ((acc[e + 2].toInt() and 0x1F) shl 8) or (acc[e + 3].toInt() and 0xFF)
-                    return
-                }
-                e += 4
-            }
-        } else if (pid == pmtPid && acc[s].toInt() == 2) {
-            val infoLen = ((acc[s + 10].toInt() and 0x0F) shl 8) or (acc[s + 11].toInt() and 0xFF)
-            var e = s + 12 + infoLen
-            val found = LinkedHashMap<Int, Int>()
-            while (e + 5 <= end) {
-                val type = acc[e].toInt() and 0xFF
-                val esPid = ((acc[e + 1].toInt() and 0x1F) shl 8) or (acc[e + 2].toInt() and 0xFF)
-                val esInfo = ((acc[e + 3].toInt() and 0x0F) shl 8) or (acc[e + 4].toInt() and 0xFF)
-                found[esPid] = type
-                e += 5 + esInfo
-            }
-            if (found.isNotEmpty()) {
-                streamTypes.clear()
-                streamTypes.putAll(found)
-            }
-        }
-    }
-
-    private fun typeName(t: Int): String = when (t) {
-        0x1B -> "H.264"
-        0x24 -> "H.265"
-        0x02 -> "MPEG-2 video"
-        0x0F -> "AAC"
-        0x11 -> "AAC-LATM"
-        0x03, 0x04 -> "audio MPEG"
-        0x06 -> "datos"
-        0x15 -> "metadatos"
-        else -> "tipo 0x%02X".format(t)
-    }
-
-    @Synchronized
-    fun summary(): String = when {
-        firstByte < 0 -> "sin datos"
-        tsPackets == 0L -> "no parece MPEG-TS (primer byte 0x%02X)".format(firstByte)
-        streamTypes.isEmpty() -> "TS sin tabla de programa aún ($tsPackets paquetes)"
-        else -> "TS: " + streamTypes.values.joinToString(" + ") { typeName(it) } +
-            if (badSync > 0) " (desajustes: $badSync)" else ""
-    }
-}
-
-/** Envuelve el socket UDP para que [TsProbe] vea los bytes que lee ExoPlayer. */
-@androidx.annotation.OptIn(UnstableApi::class)
-private class ProbingDataSource(private val inner: UdpDataSource, private val probe: TsProbe) : DataSource {
-    override fun addTransferListener(transferListener: TransferListener) = inner.addTransferListener(transferListener)
-
-    override fun open(dataSpec: DataSpec): Long = inner.open(dataSpec)
-
-    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-        val n = inner.read(buffer, offset, length)
-        if (n > 0) probe.feed(buffer, offset, n)
-        return n
-    }
-
-    override fun getUri(): Uri? = inner.uri
-
-    override fun close() = inner.close()
-}
-
-/** Variantes del lector de MPEG-TS que se van probando en cada intento hasta que una muestre imagen. */
-private val LIVE_VARIANTS = listOf(
-    "sin audio" to (DefaultTsPayloadReaderFactory.FLAG_IGNORE_AAC_STREAM or
-        DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
-        DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS),
-    "sin audio, sin detección de cuadros" to (DefaultTsPayloadReaderFactory.FLAG_IGNORE_AAC_STREAM or
-        DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES),
-    "sin audio, ajustes básicos" to DefaultTsPayloadReaderFactory.FLAG_IGNORE_AAC_STREAM,
-    "con audio" to (DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
-        DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS),
-)
-
-@androidx.annotation.OptIn(UnstableApi::class)
-@Composable
-fun LiveScreen(vm: AppVm) {
-    val client = vm.client ?: return
-    val ctx = LocalContext.current
-    var status by remember { mutableStateOf("Iniciando vista en vivo…") }
-    var hasPicture by remember { mutableStateOf(false) }
-    var diag by remember { mutableStateOf("") }
-    val probe = remember { TsProbe() }
-    val videoInfo = remember { mutableStateOf("") }
-    val lastError = remember { mutableStateOf("") }
-    val variantName = remember { mutableStateOf("") }
-    val recFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { recFocus.requestFocus() } }
-
-    val exo = remember {
-        ExoPlayer.Builder(ctx)
-            // Sin espera mínima de búfer: se muestra el primer cuadro en cuanto esté listo (vista previa en directo).
-            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(500, 2000, 0, 0).build())
-            .build()
-            .also {
-                // La vista previa no necesita audio
-                it.trackSelectionParameters = it.trackSelectionParameters.buildUpon()
-                    .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
-                    .build()
-            }
-    }
-
-    fun previewSource(variant: Int): MediaSource {
-        val flags = LIVE_VARIANTS[variant % LIVE_VARIANTS.size].second
-        val extractors = DefaultExtractorsFactory().setTsExtractorFlags(flags)
-        // La cámara envía MPEG-TS por UDP al puerto 8554 del equipo que pidió la vista previa.
-        val factory = DataSource.Factory {
-            ProbingDataSource(UdpDataSource(UdpDataSource.DEFAULT_MAX_PACKET_SIZE, 30_000), probe)
-        }
-        return ProgressiveMediaSource.Factory(factory, extractors)
-            .createMediaSource(ExoMediaItem.fromUri("udp://0.0.0.0:8554"))
-    }
-
-    DisposableEffect(exo) {
-        val listener = object : Player.Listener {
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_READY) {
-                    hasPicture = true
-                    status = ""
-                }
-            }
-
-            override fun onTracksChanged(tracks: Tracks) {
-                val names = tracks.groups.mapNotNull { g ->
-                    if (g.length > 0) g.getTrackFormat(0).sampleMimeType else null
-                }
-                if (names.isNotEmpty()) videoInfo.value = names.joinToString(", ")
-                val v = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.length > 0 }
-                if (v != null && !tracks.isTypeSupported(C.TRACK_TYPE_VIDEO)) {
-                    status = "La TV no puede decodificar el video de la cámara (${v.getTrackFormat(0).sampleMimeType})."
-                }
-            }
-
-            override fun onVideoSizeChanged(videoSize: VideoSize) {
-                if (videoSize.width > 0) videoInfo.value += " ${videoSize.width}x${videoSize.height}"
-            }
-
-            override fun onPlayerError(error: PlaybackException) {
-                hasPicture = false
-                lastError.value = error.errorCodeName + (error.cause?.let { " · ${it.javaClass.simpleName}" } ?: "")
-            }
-        }
-        exo.addListener(listener)
-        onDispose {
-            exo.removeListener(listener)
-            exo.release()
-            vm.stopStream()
-        }
-    }
-
-    // Bucle de control: abre el socket UDP, pide la transmisión a la cámara y, si no llega imagen, lo repite
-    // probando otra variante del lector de video.
-    LaunchedEffect(client) {
-        var attempt = 0
-        while (isActive) {
-            val variant = attempt % LIVE_VARIANTS.size
-            attempt++
-            variantName.value = "${variant + 1}/${LIVE_VARIANTS.size} ${LIVE_VARIANTS[variant].first}"
-            probe.bytes.set(0L)
-            hasPicture = false
-            lastError.value = ""
-            videoInfo.value = ""
-            exo.setMediaSource(previewSource(variant))
-            exo.prepare()
-            exo.playWhenReady = true
-            delay(400)
-            try {
-                if (attempt > 1) {
-                    runCatching { client.streamStop() }
-                    delay(500)
-                }
-                client.streamStart(8554)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                status = "No se pudo iniciar la vista en vivo: " + friendlyError(e)
-                delay(4000)
-                continue
-            }
-            status = "Esperando la señal de la cámara… (intento $attempt)"
-            var waited = 0
-            while (waited < 12_000 && !hasPicture && lastError.value.isEmpty()) {
-                delay(250)
-                waited += 250
-            }
-            while (isActive && hasPicture) delay(500)
-            if (isActive) {
-                status = if (probe.bytes.get() == 0L) {
-                    "No llegan datos de la cámara. Reintentando…"
-                } else {
-                    "Llegan datos pero no se pudo mostrar la imagen. Probando otra variante…"
-                }
-                delay(1500)
-            }
-        }
-    }
-
-    // Línea de diagnóstico: permite saber si la cámara envía datos y en qué punto se atasca.
-    LaunchedEffect(exo) {
-        while (true) {
-            diag = buildString {
-                append("UDP: ${probe.bytes.get() / 1024} KB · ${probe.summary()}")
-                append("\nReproductor: ${stateName(exo.playbackState)} · variante ${variantName.value}")
-                if (videoInfo.value.isNotEmpty()) append("\nPistas: ${videoInfo.value}")
-                if (lastError.value.isNotEmpty()) append("\nError: ${lastError.value}")
-            }
-            delay(500)
-        }
-    }
-
-    val recording = vm.state?.recording == true
-
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { c ->
-                PlayerView(c).apply {
-                    player = exo
-                    useController = false
-                    isFocusable = false
-                    keepScreenOn = true
-                }
-            },
-        )
-
-        if (!hasPicture) {
-            Column(
-                Modifier.align(Alignment.Center).padding(32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                if (status.isNotEmpty()) {
-                    Text(status, color = Color.White, fontSize = 22.sp)
-                }
-                Text(diag, color = TextDim, fontSize = 15.sp, textAlign = TextAlign.Center)
-            }
-        }
-
-        Row(
-            Modifier
-                .align(Alignment.BottomStart)
-                .padding(32.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            FocusButton(
-                text = if (recording) "■ Detener" else "● Grabar / Disparar",
-                onClick = { vm.toggleShutter() },
-                danger = recording,
-                focusRequester = recFocus,
-            )
-            val battery = vm.state?.battery
-            val info = buildString {
-                if (recording) append("● GRABANDO   ")
-                if (battery != null) append("Batería $battery%   ")
-                if (vm.lost) append("Conexión perdida")
-            }
-            if (info.isNotBlank()) {
-                Text(
-                    info,
-                    color = Color.White,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.background(Color(0xAA000000)).padding(horizontal = 12.dp, vertical = 8.dp),
-                )
-            }
-        }
     }
 }

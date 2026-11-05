@@ -40,7 +40,7 @@ El 133 es un fallo genérico de Android. La app ya reintenta sola 3 veces (cerra
 
 **En tu computadora:** abre la carpeta con Android Studio, o ejecuta `./gradlew assembleRelease` (JDK 17 + Android SDK 35). El APK queda en `app/build/outputs/apk/release/`.
 
-Para instalarlo en la TV: activa las opciones de desarrollador y la depuración por red, y usa `adb connect <IP-de-la-TV>` + `adb install VisorGoPro-1.2.1.apk` (o cualquier app de «enviar archivos a la TV»).
+Para instalarlo en la TV: activa las opciones de desarrollador y la depuración por red, y usa `adb connect <IP-de-la-TV>` + `adb install VisorGoPro-1.2.2.apk` (o cualquier app de «enviar archivos a la TV»).
 
 ## Firma (para poder actualizar sin desinstalar)
 
@@ -53,9 +53,11 @@ Android solo instala una versión nueva encima de otra si ambas están firmadas 
 
 Guarda una copia del `.jks` y de su clave en un lugar privado: si se pierde, habrá que desinstalar la app una vez para firmar con una llave nueva.
 
-## Vista en vivo: diagnóstico
+## Vista en vivo
 
-Mientras no hay imagen, la pantalla muestra una línea de diagnóstico: KB recibidos por UDP, estado del reproductor, formato de video y el error si lo hay. Si los KB se quedan en 0, la cámara no está enviando datos a la TV; si suben pero no hay imagen, el problema es el formato/decodificación. La app reintenta sola (detiene y vuelve a pedir la transmisión) probando en cada intento una variante distinta del lector de video (sin audio, sin detección de cuadros, con audio). La línea de diagnóstico también indica qué trae el flujo (por ejemplo «TS: H.264 + AAC»).
+La cámara envía el video (MPEG-TS) por UDP al puerto 8554 de la TV. La app lo recibe ella misma, separa el video H.264/H.265 y lo decodifica directamente con el decodificador de la TV (MediaCodec) sobre una superficie, sin ExoPlayer (que no llegaba a mostrar la imagen con este flujo). Si el flujo trae un formato inesperado también lo detecta (por ejemplo MPEG-TS dentro de RTP).
+
+Mientras no hay imagen, la pantalla muestra una línea de diagnóstico: KB recibidos por UDP, qué trae el flujo («TS: H.264 + AAC»), estado del decodificador, resolución, cuadros decodificados y descartados, y el error si lo hay. La app reintenta sola (detiene y vuelve a pedir la transmisión).
 
 ## Notas técnicas
 
