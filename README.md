@@ -31,7 +31,7 @@ El 133 es un fallo genérico de Android. La app ya reintenta sola 3 veces (cerra
 ## Control remoto
 
 - Flechas / OK: navegar y elegir. Atrás: volver.
-- En un video: **OK** pausa/reanuda, **◀ ▶** saltan 10 s (mantén pulsado para saltar más), **▲ ▼** muestran los controles y **Menú** alterna entre el original y la versión ligera (LRV). Si la TV no puede decodificar el original (por ejemplo 5.3K), la app cambia sola a la versión ligera.
+- En un video: **OK** pausa/reanuda, **◀ ▶** saltan 10 s (mantén pulsado para saltar más), **▲** muestra los controles y **▼** (o **Menú**, si tu control lo tiene) alterna entre el original y la versión ligera (LRV). Si la TV no puede decodificar el original (por ejemplo 5.3K), la app cambia sola a la versión ligera.
 - En una foto: ◀ ▶ para pasar de foto.
 
 ## Compilar el APK
@@ -40,7 +40,7 @@ El 133 es un fallo genérico de Android. La app ya reintenta sola 3 veces (cerra
 
 **En tu computadora:** abre la carpeta con Android Studio, o ejecuta `./gradlew assembleRelease` (JDK 17 + Android SDK 35). El APK queda en `app/build/outputs/apk/release/`.
 
-Para instalarlo en la TV: activa las opciones de desarrollador y la depuración por red, y usa `adb connect <IP-de-la-TV>` + `adb install VisorGoPro-1.2.0.apk` (o cualquier app de «enviar archivos a la TV»).
+Para instalarlo en la TV: activa las opciones de desarrollador y la depuración por red, y usa `adb connect <IP-de-la-TV>` + `adb install VisorGoPro-1.2.1.apk` (o cualquier app de «enviar archivos a la TV»).
 
 ## Firma (para poder actualizar sin desinstalar)
 
@@ -55,10 +55,11 @@ Guarda una copia del `.jks` y de su clave en un lugar privado: si se pierde, hab
 
 ## Vista en vivo: diagnóstico
 
-Mientras no hay imagen, la pantalla muestra una línea de diagnóstico: KB recibidos por UDP, estado del reproductor, formato de video y el error si lo hay. Si los KB se quedan en 0, la cámara no está enviando datos a la TV; si suben pero no hay imagen, el problema es el formato/decodificación. La app reintenta sola (detiene y vuelve a pedir la transmisión).
+Mientras no hay imagen, la pantalla muestra una línea de diagnóstico: KB recibidos por UDP, estado del reproductor, formato de video y el error si lo hay. Si los KB se quedan en 0, la cámara no está enviando datos a la TV; si suben pero no hay imagen, el problema es el formato/decodificación. La app reintenta sola (detiene y vuelve a pedir la transmisión) probando en cada intento una variante distinta del lector de video (sin audio, sin detección de cuadros, con audio). La línea de diagnóstico también indica qué trae el flujo (por ejemplo «TS: H.264 + AAC»).
 
 ## Notas técnicas
 
+- La clave del WiFi de casa se guarda cifrada con AES-GCM; la llave de cifrado vive en el Android Keystore de la TV (`SecretStore.kt`). Se puede ver, dejar de recordar u olvidar desde el formulario de red doméstica.
 - La tipografía es Poppins (licencia SIL OFL, en `licenses/Poppins-OFL.txt`).
 
 - Endpoints usados (Open GoPro): `gopro/camera/info`, `state`, `keep_alive`, `shutter/start|stop`, `setting?setting=&option=`, `presets/get`, `presets/load?id=`, `stream/start?port=8554`, `stream/stop`, `gopro/media/list`, `media/thumbnail`, `media/screennail`, y `videos/DCIM/<carpeta>/<archivo>`.

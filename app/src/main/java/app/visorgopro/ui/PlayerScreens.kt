@@ -1,6 +1,7 @@
 package app.visorgopro.ui
 
 import android.graphics.Bitmap
+import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -47,6 +48,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -56,6 +58,7 @@ import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.UdpDataSource
@@ -90,7 +93,7 @@ private fun fmtTime(ms: Long): String {
  * (no en los botones internos del PlayerView, que desaparecen al ocultarse y dejaban la app sin respuesta).
  *
  *  OK / ▶❚❚ : pausa o reanuda     ◀ ▶ : saltar 10 s (mantén pulsado para saltar más)
- *  ▲ ▼ : mostrar los controles     Menú : original / versión ligera (LRV)
+ *  ▲ : mostrar los controles     ▼ (o Menú) : original / versión ligera (LRV)
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
@@ -100,7 +103,7 @@ fun VideoScreen(vm: AppVm, item: MediaItem) {
     val lrv = client.lrvUrl(item)
     var light by remember { mutableStateOf(false) }
     var notice by remember {
-        mutableStateOf<String?>(if (lrv != null) "Menú: alternar versión ligera (LRV)" else null)
+        mutableStateOf<String?>(if (lrv != null) "▼ alterna entre original y versión ligera (LRV)" else null)
     }
     var seenTick by remember { mutableIntStateOf(vm.menuTick) }
     val focus = remember { FocusRequester() }
@@ -135,6 +138,17 @@ fun VideoScreen(vm: AppVm, item: MediaItem) {
         } else {
             exo.playWhenReady = !exo.playWhenReady
         }
+        touch()
+    }
+
+    /** Alterna entre el video original y la versión ligera (LRV). */
+    fun toggleQuality() {
+        if (lrv == null) {
+            touch()
+            return
+        }
+        light = !light
+        notice = if (light) "Versión ligera (LRV)." else "Versión original."
         touch()
     }
 
@@ -176,14 +190,11 @@ fun VideoScreen(vm: AppVm, item: MediaItem) {
         }
     }
 
-    // Botón Menú del control remoto: alterna original / versión ligera.
+    // Botón Menú (si el control remoto lo tiene): también alterna original / versión ligera.
     LaunchedEffect(vm.menuTick) {
         if (vm.menuTick != seenTick) {
             seenTick = vm.menuTick
-            if (lrv != null) {
-                light = !light
-                notice = if (light) "Versión ligera (LRV)." else "Versión original."
-            }
+            toggleQuality()
         }
     }
 
@@ -263,7 +274,11 @@ fun VideoScreen(vm: AppVm, item: MediaItem) {
                         seekBy(-step)
                         true
                     }
-                    Key.DirectionUp, Key.DirectionDown -> {
+                    Key.DirectionDown -> {
+                        if (repeats == 0) toggleQuality() else touch()
+                        true
+                    }
+                    Key.DirectionUp -> {
                         touch()
                         true
                     }
@@ -355,7 +370,7 @@ fun VideoScreen(vm: AppVm, item: MediaItem) {
                 }
                 Text(
                     "OK pausa / reanuda    ◀ ▶ saltar 10 s (mantén para más)" +
-                        if (lrv != null) "    Menú: original / ligera" else "",
+                        if (lrv != null) "    ▼ original / ligera" else "",
                     color = TextDim,
                     fontSize = 16.sp,
                 )
@@ -440,6 +455,145 @@ private fun stateName(state: Int): String = when (state) {
     else -> "?"
 }
 
+/**
+ * Mira por encima el flujo MPEG-TS que llega por UDP (tabla PAT/PMT) para saber qué trae la cámara: códec de video y
+ * de audio. Solo sirve para el diagnóstico en pantalla; la imagen la decodifica ExoPlayer.
+ */
+private class TsProbe {
+    val bytes = AtomicLong(0L)
+
+    private val acc = ByteArray(8192)
+    private var len = 0
+    private var pmtPid = -1
+    private val streamTypes = LinkedHashMap<Int, Int>()
+    private var tsPackets = 0L
+    private var badSync = 0L
+
+    @Volatile
+    private var firstByte = -1
+
+    @Synchronized
+    fun feed(data: ByteArray, offset: Int, n: Int) {
+        bytes.addAndGet(n.toLong())
+        if (firstByte < 0) firstByte = data[offset].toInt() and 0xFF
+        var src = offset
+        var left = n
+        while (left > 0) {
+            val take = minOf(left, acc.size - len)
+            System.arraycopy(data, src, acc, len, take)
+            len += take
+            src += take
+            left -= take
+            var pos = 0
+            while (len - pos >= 188) {
+                if ((acc[pos].toInt() and 0xFF) != 0x47) {
+                    badSync++
+                    pos++
+                    continue
+                }
+                packet(pos)
+                tsPackets++
+                pos += 188
+            }
+            if (pos > 0) {
+                System.arraycopy(acc, pos, acc, 0, len - pos)
+                len -= pos
+            }
+        }
+    }
+
+    private fun packet(o: Int) {
+        val pid = ((acc[o + 1].toInt() and 0x1F) shl 8) or (acc[o + 2].toInt() and 0xFF)
+        val pusi = (acc[o + 1].toInt() and 0x40) != 0
+        val afc = (acc[o + 3].toInt() shr 4) and 3
+        if (!pusi || (afc and 1) == 0) return
+        var p = o + 4
+        if ((afc and 2) != 0) p += 1 + (acc[o + 4].toInt() and 0xFF)
+        if (p >= o + 188) return
+        val s = p + 1 + (acc[p].toInt() and 0xFF) // salta el pointer_field
+        if (s + 12 > o + 188) return
+        val sectionLen = ((acc[s + 1].toInt() and 0x0F) shl 8) or (acc[s + 2].toInt() and 0xFF)
+        val end = minOf(s + 3 + sectionLen - 4, o + 188)
+        if (pid == 0 && acc[s].toInt() == 0) {
+            var e = s + 8
+            while (e + 4 <= end) {
+                val program = ((acc[e].toInt() and 0xFF) shl 8) or (acc[e + 1].toInt() and 0xFF)
+                if (program != 0) {
+                    pmtPid = ((acc[e + 2].toInt() and 0x1F) shl 8) or (acc[e + 3].toInt() and 0xFF)
+                    return
+                }
+                e += 4
+            }
+        } else if (pid == pmtPid && acc[s].toInt() == 2) {
+            val infoLen = ((acc[s + 10].toInt() and 0x0F) shl 8) or (acc[s + 11].toInt() and 0xFF)
+            var e = s + 12 + infoLen
+            val found = LinkedHashMap<Int, Int>()
+            while (e + 5 <= end) {
+                val type = acc[e].toInt() and 0xFF
+                val esPid = ((acc[e + 1].toInt() and 0x1F) shl 8) or (acc[e + 2].toInt() and 0xFF)
+                val esInfo = ((acc[e + 3].toInt() and 0x0F) shl 8) or (acc[e + 4].toInt() and 0xFF)
+                found[esPid] = type
+                e += 5 + esInfo
+            }
+            if (found.isNotEmpty()) {
+                streamTypes.clear()
+                streamTypes.putAll(found)
+            }
+        }
+    }
+
+    private fun typeName(t: Int): String = when (t) {
+        0x1B -> "H.264"
+        0x24 -> "H.265"
+        0x02 -> "MPEG-2 video"
+        0x0F -> "AAC"
+        0x11 -> "AAC-LATM"
+        0x03, 0x04 -> "audio MPEG"
+        0x06 -> "datos"
+        0x15 -> "metadatos"
+        else -> "tipo 0x%02X".format(t)
+    }
+
+    @Synchronized
+    fun summary(): String = when {
+        firstByte < 0 -> "sin datos"
+        tsPackets == 0L -> "no parece MPEG-TS (primer byte 0x%02X)".format(firstByte)
+        streamTypes.isEmpty() -> "TS sin tabla de programa aún ($tsPackets paquetes)"
+        else -> "TS: " + streamTypes.values.joinToString(" + ") { typeName(it) } +
+            if (badSync > 0) " (desajustes: $badSync)" else ""
+    }
+}
+
+/** Envuelve el socket UDP para que [TsProbe] vea los bytes que lee ExoPlayer. */
+@androidx.annotation.OptIn(UnstableApi::class)
+private class ProbingDataSource(private val inner: UdpDataSource, private val probe: TsProbe) : DataSource {
+    override fun addTransferListener(transferListener: TransferListener) = inner.addTransferListener(transferListener)
+
+    override fun open(dataSpec: DataSpec): Long = inner.open(dataSpec)
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        val n = inner.read(buffer, offset, length)
+        if (n > 0) probe.feed(buffer, offset, n)
+        return n
+    }
+
+    override fun getUri(): Uri? = inner.uri
+
+    override fun close() = inner.close()
+}
+
+/** Variantes del lector de MPEG-TS que se van probando en cada intento hasta que una muestre imagen. */
+private val LIVE_VARIANTS = listOf(
+    "sin audio" to (DefaultTsPayloadReaderFactory.FLAG_IGNORE_AAC_STREAM or
+        DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
+        DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS),
+    "sin audio, sin detección de cuadros" to (DefaultTsPayloadReaderFactory.FLAG_IGNORE_AAC_STREAM or
+        DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES),
+    "sin audio, ajustes básicos" to DefaultTsPayloadReaderFactory.FLAG_IGNORE_AAC_STREAM,
+    "con audio" to (DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
+        DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS),
+)
+
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 fun LiveScreen(vm: AppVm) {
@@ -448,41 +602,32 @@ fun LiveScreen(vm: AppVm) {
     var status by remember { mutableStateOf("Iniciando vista en vivo…") }
     var hasPicture by remember { mutableStateOf(false) }
     var diag by remember { mutableStateOf("") }
-    val bytes = remember { AtomicLong(0L) }
-    val videoMime = remember { mutableStateOf("") }
+    val probe = remember { TsProbe() }
+    val videoInfo = remember { mutableStateOf("") }
     val lastError = remember { mutableStateOf("") }
+    val variantName = remember { mutableStateOf("") }
     val recFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { recFocus.requestFocus() } }
 
     val exo = remember {
         ExoPlayer.Builder(ctx)
-            // Búfer mínimo para tener la menor latencia posible.
-            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(500, 2000, 250, 500).build())
+            // Sin espera mínima de búfer: se muestra el primer cuadro en cuanto esté listo (vista previa en directo).
+            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(500, 2000, 0, 0).build())
             .build()
+            .also {
+                // La vista previa no necesita audio
+                it.trackSelectionParameters = it.trackSelectionParameters.buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+                    .build()
+            }
     }
 
-    fun previewSource(): MediaSource {
-        val extractors = DefaultExtractorsFactory().setTsExtractorFlags(
-            DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
-                DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS
-        )
-        val counter = object : TransferListener {
-            override fun onTransferInitializing(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
-            override fun onTransferStart(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
-            override fun onBytesTransferred(
-                source: DataSource,
-                dataSpec: DataSpec,
-                isNetwork: Boolean,
-                bytesTransferred: Int,
-            ) {
-                bytes.addAndGet(bytesTransferred.toLong())
-            }
-
-            override fun onTransferEnd(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
-        }
+    fun previewSource(variant: Int): MediaSource {
+        val flags = LIVE_VARIANTS[variant % LIVE_VARIANTS.size].second
+        val extractors = DefaultExtractorsFactory().setTsExtractorFlags(flags)
         // La cámara envía MPEG-TS por UDP al puerto 8554 del equipo que pidió la vista previa.
         val factory = DataSource.Factory {
-            UdpDataSource(UdpDataSource.DEFAULT_MAX_PACKET_SIZE, 30_000).also { it.addTransferListener(counter) }
+            ProbingDataSource(UdpDataSource(UdpDataSource.DEFAULT_MAX_PACKET_SIZE, 30_000), probe)
         }
         return ProgressiveMediaSource.Factory(factory, extractors)
             .createMediaSource(ExoMediaItem.fromUri("udp://0.0.0.0:8554"))
@@ -498,14 +643,18 @@ fun LiveScreen(vm: AppVm) {
             }
 
             override fun onTracksChanged(tracks: Tracks) {
-                val fmt = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.length > 0 }
-                    ?.getTrackFormat(0)
-                if (fmt != null) {
-                    videoMime.value = fmt.sampleMimeType.orEmpty() + if (fmt.width > 0) " ${fmt.width}x${fmt.height}" else ""
-                    if (!tracks.isTypeSupported(C.TRACK_TYPE_VIDEO)) {
-                        status = "La TV no puede decodificar el video de la cámara (${fmt.sampleMimeType})."
-                    }
+                val names = tracks.groups.mapNotNull { g ->
+                    if (g.length > 0) g.getTrackFormat(0).sampleMimeType else null
                 }
+                if (names.isNotEmpty()) videoInfo.value = names.joinToString(", ")
+                val v = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.length > 0 }
+                if (v != null && !tracks.isTypeSupported(C.TRACK_TYPE_VIDEO)) {
+                    status = "La TV no puede decodificar el video de la cámara (${v.getTrackFormat(0).sampleMimeType})."
+                }
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width > 0) videoInfo.value += " ${videoSize.width}x${videoSize.height}"
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -521,15 +670,19 @@ fun LiveScreen(vm: AppVm) {
         }
     }
 
-    // Bucle de control: abre el socket UDP, pide la transmisión a la cámara y, si no llega imagen, lo repite.
+    // Bucle de control: abre el socket UDP, pide la transmisión a la cámara y, si no llega imagen, lo repite
+    // probando otra variante del lector de video.
     LaunchedEffect(client) {
         var attempt = 0
         while (isActive) {
+            val variant = attempt % LIVE_VARIANTS.size
             attempt++
-            bytes.set(0L)
+            variantName.value = "${variant + 1}/${LIVE_VARIANTS.size} ${LIVE_VARIANTS[variant].first}"
+            probe.bytes.set(0L)
             hasPicture = false
             lastError.value = ""
-            exo.setMediaSource(previewSource())
+            videoInfo.value = ""
+            exo.setMediaSource(previewSource(variant))
             exo.prepare()
             exo.playWhenReady = true
             delay(400)
@@ -548,16 +701,16 @@ fun LiveScreen(vm: AppVm) {
             }
             status = "Esperando la señal de la cámara… (intento $attempt)"
             var waited = 0
-            while (waited < 15_000 && !hasPicture && lastError.value.isEmpty()) {
+            while (waited < 12_000 && !hasPicture && lastError.value.isEmpty()) {
                 delay(250)
                 waited += 250
             }
             while (isActive && hasPicture) delay(500)
             if (isActive) {
-                status = if (bytes.get() == 0L) {
+                status = if (probe.bytes.get() == 0L) {
                     "No llegan datos de la cámara. Reintentando…"
                 } else {
-                    "Llegan datos pero no se pudo mostrar la imagen. Reintentando…"
+                    "Llegan datos pero no se pudo mostrar la imagen. Probando otra variante…"
                 }
                 delay(1500)
             }
@@ -568,9 +721,10 @@ fun LiveScreen(vm: AppVm) {
     LaunchedEffect(exo) {
         while (true) {
             diag = buildString {
-                append("UDP: ${bytes.get() / 1024} KB recibidos · reproductor: ${stateName(exo.playbackState)}")
-                if (videoMime.value.isNotEmpty()) append(" · ${videoMime.value}")
-                if (lastError.value.isNotEmpty()) append(" · error: ${lastError.value}")
+                append("UDP: ${probe.bytes.get() / 1024} KB · ${probe.summary()}")
+                append("\nReproductor: ${stateName(exo.playbackState)} · variante ${variantName.value}")
+                if (videoInfo.value.isNotEmpty()) append("\nPistas: ${videoInfo.value}")
+                if (lastError.value.isNotEmpty()) append("\nError: ${lastError.value}")
             }
             delay(500)
         }
@@ -600,7 +754,7 @@ fun LiveScreen(vm: AppVm) {
                 if (status.isNotEmpty()) {
                     Text(status, color = Color.White, fontSize = 22.sp)
                 }
-                Text(diag, color = TextDim, fontSize = 15.sp)
+                Text(diag, color = TextDim, fontSize = 15.sp, textAlign = TextAlign.Center)
             }
         }
 

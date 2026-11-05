@@ -16,7 +16,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -26,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.visorgopro.AppVm
@@ -135,9 +139,11 @@ fun BluetoothScreen(vm: AppVm) {
             }
 
             BtStage.HomeForm -> {
+                var showPass by remember { mutableStateOf(false) }
                 Text(
                     "Escribe los datos del WiFi de tu router (la cámara se conecta a él; la TV, por WiFi o por cable, debe estar " +
-                        "en el mismo router). Mejor la banda de 2,4 GHz. La clave no se guarda.",
+                        "en el mismo router). Mejor la banda de 2,4 GHz. " +
+                        if (bt.passSaved) "La clave guardada ya está puesta." else "La clave se puede guardar cifrada en esta TV.",
                     color = TextDim,
                     fontSize = 17.sp,
                     modifier = Modifier.widthIn(max = 900.dp),
@@ -155,13 +161,27 @@ fun BluetoothScreen(vm: AppVm) {
                     onValueChange = { bt.homePass = it },
                     label = { Text("Contraseña del WiFi") },
                     singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
+                    visualTransformation = if (showPass) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Password,
                         imeAction = ImeAction.Done,
                     ),
                     modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth(),
                 )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    FocusButton(
+                        if (showPass) "Ocultar clave" else "Ver clave",
+                        onClick = { showPass = !showPass },
+                    )
+                    FocusButton(
+                        if (bt.rememberPass) "Recordar la clave: sí" else "Recordar la clave: no",
+                        selected = bt.rememberPass,
+                        onClick = { bt.rememberPass = !bt.rememberPass },
+                    )
+                    if (bt.passSaved) {
+                        FocusButton("Olvidar la clave guardada", onClick = { bt.forgetPass() })
+                    }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     FocusButton("Configurar la cámara", onClick = { bt.setupHome() })
                     FocusButton("Cancelar", onClick = { bt.cancel() })

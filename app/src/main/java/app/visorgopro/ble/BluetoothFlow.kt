@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import app.visorgopro.AppVm
+import app.visorgopro.SecretStore
 import app.visorgopro.net.Config
 import app.visorgopro.net.ConnMode
 import java.util.concurrent.TimeoutException
@@ -60,12 +61,23 @@ class BluetoothFlow(
     var apPass by mutableStateOf("")
         private set
     var homeSsid by mutableStateOf(prefs.getString("home_ssid", "") ?: "")
-    var homePass by mutableStateOf("")
+    var homePass by mutableStateOf(SecretStore.load(app, HOME_PASS_KEY) ?: "")
+
+    /** Hay una clave guardada (cifrada) en esta TV. */
+    var passSaved by mutableStateOf(homePass.isNotEmpty())
+        private set
+
+    /** Recordar la clave del WiFi tras configurar la cámara. */
+    var rememberPass by mutableStateOf(true)
 
     private var ble: GoProBle? = null
     private var scanJob: Job? = null
     private var workJob: Job? = null
     private var watchJob: Job? = null
+
+    private companion object {
+        const val HOME_PASS_KEY = "home_wifi_pass"
+    }
 
     private fun step(text: String) {
         log = (log + text).takeLast(8)
@@ -262,6 +274,13 @@ class BluetoothFlow(
         stage = BtStage.HomeForm
     }
 
+    /** Borra la clave guardada de esta TV. */
+    fun forgetPass() {
+        SecretStore.clear(app, HOME_PASS_KEY)
+        homePass = ""
+        passSaved = false
+    }
+
     fun setupHome() {
         val b = ble ?: return
         val ssid = homeSsid.trim()
@@ -277,9 +296,15 @@ class BluetoothFlow(
             try {
                 step("Conectando la cámara a «$ssid»…")
                 b.provisionWifi(ssid, homePass)
+                // La cámara aceptó la red: la clave es correcta y se puede guardar (cifrada) para la próxima vez.
+                if (rememberPass && homePass.isNotEmpty()) {
+                    passSaved = SecretStore.save(app, HOME_PASS_KEY, homePass)
+                } else if (!rememberPass) {
+                    forgetPass()
+                }
                 step("La cámara ya está en tu red. Configurando el acceso (COHN)…")
                 val creds = b.provisionCohn { step(it) }
-                homePass = ""
+                if (!rememberPass) homePass = ""
                 step("Listo. IP de la cámara: ${creds.ip}")
                 closeBle()
                 vm.wifiLink.release()
