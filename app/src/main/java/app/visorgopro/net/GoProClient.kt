@@ -248,6 +248,7 @@ fun friendlyError(e: Throwable): String = when (e) {
         401 -> "Usuario o contraseña incorrectos."
         403 -> "La cámara rechazó la solicitud (403)."
         404 -> "La cámara no soporta esta función (404)."
+        409 -> "La cámara está ocupada o esa función ya estaba activa (409)."
         else -> "La cámara respondió con error ${e.code}."
     }
     is javax.net.ssl.SSLException ->

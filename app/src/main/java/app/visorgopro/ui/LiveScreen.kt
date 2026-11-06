@@ -34,6 +34,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.visorgopro.AppVm
+import app.visorgopro.net.GoProClient
+import app.visorgopro.net.GoProHttpException
 import app.visorgopro.net.friendlyError
 import java.io.ByteArrayOutputStream
 import java.net.DatagramPacket
@@ -452,6 +454,43 @@ class LiveStream(private val port: Int = 8554) {
     }
 }
 
+/**
+ * Pide la vista previa a la cámara. Si ya había una activa (error 409: pasa cuando una sesión anterior no la detuvo),
+ * primero se detiene, se espera a que el estado 32 («vista previa activa») vuelva a 0 y se pide de nuevo.
+ * Devuelve el mensaje de error, o null si la cámara aceptó.
+ */
+private suspend fun startPreview(client: GoProClient): String? {
+    suspend fun stopAndWait() {
+        runCatching { client.streamStop() }
+        repeat(10) {
+            delay(500)
+            val active = runCatching { client.state().status[32] }.getOrNull()
+            if (active == null || active == 0L) return
+        }
+    }
+
+    var last: Exception? = null
+    repeat(4) { n ->
+        stopAndWait()
+        try {
+            client.streamStart(8554)
+            return null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            last = e
+            delay(1_000L + n * 500L)
+        }
+    }
+    val e = last
+    return if (e is GoProHttpException && e.code == 409) {
+        "La cámara dice que la vista previa ya está activa u ocupada (409) y no se pudo reiniciar. " +
+            "Apaga y enciende la cámara, o en la cámara: Preferencias → Conexiones → Restablecer conexiones."
+    } else {
+        friendlyError(e ?: IllegalStateException("sin respuesta"))
+    }
+}
+
 @Composable
 fun LiveScreen(vm: AppVm) {
     val client = vm.client ?: return
@@ -480,17 +519,11 @@ fun LiveScreen(vm: AppVm) {
             attempt++
             stream.resetCounters()
             delay(300)
-            try {
-                if (attempt > 1) {
-                    runCatching { client.streamStop() }
-                    delay(500)
-                }
-                client.streamStart(8554)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                status = "No se pudo iniciar la vista en vivo: " + friendlyError(e)
-                delay(4_000)
+            status = "Pidiendo la vista en vivo a la cámara… (intento $attempt)"
+            val startError = startPreview(client)
+            if (startError != null) {
+                status = "No se pudo iniciar la vista en vivo: $startError"
+                delay(5_000)
                 continue
             }
             status = "Esperando la imagen de la cámara… (intento $attempt)"
