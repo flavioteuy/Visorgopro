@@ -1,3 +1,3 @@
-Versión: 1.2.2
+Versión: 1.2.3
 Firmado con: llave propia (secretos de GitHub)
 V2 Signer: certificate SHA-256 digest: b7d55a282a5180962a5138263b3d1c48308003fd3c768ac083cd5ed018e0f6b5
