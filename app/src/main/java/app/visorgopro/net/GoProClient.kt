@@ -148,9 +148,9 @@ class GoProClient(val config: Config) {
 
     // ---------------------------------------------------------------- Vista en vivo
 
-    suspend fun streamStart(port: Int = 8554) {
-        getJson("gopro/camera/stream/start?port=$port")
-    }
+    /** Devuelve la respuesta de la cámara (normalmente un JSON vacío) para mostrarla en el diagnóstico. */
+    suspend fun streamStart(port: Int = 8554): String =
+        getJson("gopro/camera/stream/start?port=$port").toString()
 
     suspend fun streamStop() {
         getJson("gopro/camera/stream/stop")

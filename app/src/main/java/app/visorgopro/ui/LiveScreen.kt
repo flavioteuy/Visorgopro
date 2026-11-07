@@ -40,19 +40,28 @@ import app.visorgopro.net.friendlyError
 import java.io.ByteArrayOutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.NetworkInterface
 import java.net.SocketTimeoutException
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 
 /**
  * Receptor de la vista previa de la cámara. La cámara manda video MPEG-TS por UDP; aquí se recibe, se separa el
  * video (H.264 o H.265) y se decodifica directamente con MediaCodec sobre una Surface, sin ExoPlayer. Así no
  * dependemos de cómo ExoPlayer interprete los tiempos del flujo y se muestra cada cuadro en cuanto llega.
  */
-class LiveStream(private val port: Int = 8554) {
+class LiveStream(initialPort: Int = 8554) {
+    /** Puerto UDP en el que se escucha; se puede cambiar con [rebind] (la cámara manda al puerto que se le pida). */
+    @Volatile
+    private var port = initialPort
+
     val bytes = AtomicLong(0L)
     val frames = AtomicLong(0L)
     private val dropped = AtomicLong(0L)
@@ -85,6 +94,17 @@ class LiveStream(private val port: Int = 8554) {
     @Volatile
     private var tsPackets = 0L
 
+    /** Estado del socket UDP (no se borra al reiniciar contadores: sirve para ver si el puerto se pudo abrir). */
+    @Volatile
+    private var socketInfo = "socket UDP sin abrir"
+
+    @Volatile
+    private var selfTest = ""
+
+    /** IP y puerto desde donde llegó el primer datagrama. */
+    @Volatile
+    private var source = ""
+
     @Volatile
     private var running = false
     private var thread: Thread? = null
@@ -107,7 +127,7 @@ class LiveStream(private val port: Int = 8554) {
     private var codecSurface: Surface? = null
 
     fun start() {
-        if (running) return
+        if (running && thread?.isAlive == true) return
         running = true
         thread = Thread({ receiveLoop() }, "live-udp").also { it.start() }
     }
@@ -118,12 +138,23 @@ class LiveStream(private val port: Int = 8554) {
         thread = null
     }
 
+    fun isAlive(): Boolean = thread?.isAlive == true
+
+    /** Cambia el puerto en el que se escucha (el hilo de recepción vuelve a abrir el socket). */
+    fun rebind(newPort: Int) {
+        port = newPort
+    }
+
     fun resetCounters() {
         bytes.set(0L)
         frames.set(0L)
         dropped.set(0L)
         lastFrameAt = 0L
         lastError = ""
+        firstByte = -1
+        tsPackets = 0L
+        streamTypes = emptyList()
+        source = ""
     }
 
     /** Hay imagen si se decodificó un cuadro hace menos de 3 segundos. */
@@ -141,6 +172,9 @@ class LiveStream(private val port: Int = 8554) {
         append("\n$decoderInfo")
         if (videoWidth > 0) append(" · ${videoWidth}x$videoHeight")
         append(" · cuadros: ${frames.get()} · descartados: ${dropped.get()}")
+        append("\n$socketInfo")
+        if (selfTest.isNotEmpty()) append(" · $selfTest")
+        if (source.isNotEmpty()) append(" · origen $source")
         if (lastError.isNotEmpty()) append("\nError: $lastError")
     }
 
@@ -160,43 +194,75 @@ class LiveStream(private val port: Int = 8554) {
 
     private fun receiveLoop() {
         runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY) }
-        var opened: DatagramSocket? = null
-        var tries = 0
-        while (running && opened == null) {
-            try {
-                opened = DatagramSocket(null).apply {
-                    reuseAddress = true
-                    receiveBufferSize = 4 shl 20
-                    soTimeout = 1_000
-                    bind(InetSocketAddress(port))
-                }
-            } catch (e: Exception) {
-                lastError = "no se pudo abrir el puerto UDP $port: ${e.message}"
-                if (++tries > 20) return
-                Thread.sleep(500)
-            }
-        }
-        val sock = opened ?: return
         val buf = ByteArray(4096)
         val pkt = DatagramPacket(buf, buf.size)
         try {
             while (running) {
-                pkt.length = buf.size
+                val p = port
+                val sock = openSocket(p) ?: continue
                 try {
-                    sock.receive(pkt)
-                } catch (e: SocketTimeoutException) {
-                    continue
+                    socketInfo = "puerto UDP $p abierto"
+                    selfTest = "autoprueba pendiente"
+                    sendSelfTest(p)
+                    while (running && port == p) {
+                        pkt.length = buf.size
+                        try {
+                            sock.receive(pkt)
+                        } catch (e: SocketTimeoutException) {
+                            continue
+                        }
+                        // La autoprueba local confirma que el socket recibe; no cuenta como dato de la cámara.
+                        if (pkt.address?.isLoopbackAddress == true) {
+                            selfTest = "autoprueba local OK"
+                            continue
+                        }
+                        val n = pkt.length
+                        bytes.addAndGet(n.toLong())
+                        if (firstByte < 0 && n > 0) {
+                            firstByte = buf[0].toInt() and 0xFF
+                            source = "${pkt.address?.hostAddress.orEmpty()}:${pkt.port}"
+                        }
+                        handleDatagram(buf, n)
+                    }
+                } catch (e: Exception) {
+                    if (running) {
+                        socketInfo = "error al leer el puerto UDP $p: ${e.javaClass.simpleName}: ${e.message}"
+                        Thread.sleep(300)
+                    }
+                } finally {
+                    runCatching { sock.close() }
                 }
-                val n = pkt.length
-                bytes.addAndGet(n.toLong())
-                if (firstByte < 0 && n > 0) firstByte = buf[0].toInt() and 0xFF
-                handleDatagram(buf, n)
             }
-        } catch (e: Exception) {
-            if (running) lastError = "UDP: ${e.javaClass.simpleName}: ${e.message}"
         } finally {
-            runCatching { sock.close() }
             releaseDecoder()
+        }
+    }
+
+    /**
+     * Abre el socket sin SO_REUSEADDR a propósito: si otro socket tuviera el puerto, preferimos ver el error
+     * en pantalla en vez de que los datagramas se vayan al otro socket sin avisar.
+     */
+    private fun openSocket(p: Int): DatagramSocket? {
+        val s = DatagramSocket(null)
+        return try {
+            s.receiveBufferSize = 4 shl 20
+            s.soTimeout = 250
+            s.bind(InetSocketAddress(p))
+            s
+        } catch (e: Exception) {
+            runCatching { s.close() }
+            socketInfo = "no se pudo abrir el puerto UDP $p: ${e.javaClass.simpleName}: ${e.message}"
+            Thread.sleep(500)
+            null
+        }
+    }
+
+    private fun sendSelfTest(p: Int) {
+        runCatching {
+            DatagramSocket().use { s ->
+                val lo = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
+                s.send(DatagramPacket(byteArrayOf(0), 1, lo, p))
+            }
         }
     }
 
@@ -459,7 +525,9 @@ class LiveStream(private val port: Int = 8554) {
  * primero se detiene, se espera a que el estado 32 («vista previa activa») vuelva a 0 y se pide de nuevo.
  * Devuelve el mensaje de error, o null si la cámara aceptó.
  */
-private suspend fun startPreview(client: GoProClient): String? {
+private class PreviewResult(val error: String?, val reply: String = "")
+
+private suspend fun startPreview(client: GoProClient, port: Int): PreviewResult {
     suspend fun stopAndWait() {
         runCatching { client.streamStop() }
         repeat(10) {
@@ -473,8 +541,7 @@ private suspend fun startPreview(client: GoProClient): String? {
     repeat(4) { n ->
         stopAndWait()
         try {
-            client.streamStart(8554)
-            return null
+            return PreviewResult(null, client.streamStart(port))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -483,13 +550,32 @@ private suspend fun startPreview(client: GoProClient): String? {
         }
     }
     val e = last
-    return if (e is GoProHttpException && e.code == 409) {
+    val msg = if (e is GoProHttpException && e.code == 409) {
         "La cámara dice que la vista previa ya está activa u ocupada (409) y no se pudo reiniciar. " +
             "Apaga y enciende la cámara, o en la cámara: Preferencias → Conexiones → Restablecer conexiones."
     } else {
         friendlyError(e ?: IllegalStateException("sin respuesta"))
     }
+    return PreviewResult(msg)
 }
+
+/** Direcciones IPv4 de esta TV, para comprobar que está en la misma red que la cámara. */
+private fun localAddresses(): String = runCatching {
+    NetworkInterface.getNetworkInterfaces().toList()
+        .filter { it.isUp && !it.isLoopback }
+        .flatMap { ni -> ni.inetAddresses.toList().filterIsInstance<Inet4Address>().map { "${it.hostAddress} (${ni.name})" } }
+        .joinToString(", ")
+}.getOrDefault("")
+
+private fun flag(v: Long?): String = when (v) {
+    null -> "?"
+    1L -> "sí"
+    0L -> "no"
+    else -> v.toString()
+}
+
+/** Puertos UDP que se prueban, uno por intento. */
+private val PREVIEW_PORTS = intArrayOf(8554, 8556, 8555, 8557)
 
 @Composable
 fun LiveScreen(vm: AppVm) {
@@ -512,20 +598,31 @@ fun LiveScreen(vm: AppVm) {
         }
     }
 
-    // Bucle de control: pide la transmisión y, si no aparece imagen, la detiene y la vuelve a pedir.
+    var localIps by remember { mutableStateOf("") }
+    var startReply by remember { mutableStateOf("") }
+    var currentPort by remember { mutableStateOf(PREVIEW_PORTS[0]) }
+    LaunchedEffect(Unit) { localIps = withContext(Dispatchers.IO) { localAddresses() } }
+
+    // Bucle de control: pide la transmisión y, si no aparece imagen, la detiene y la vuelve a pedir
+    // cambiando de puerto UDP en cada intento (por si la cámara o la TV dejaron trabado el anterior).
     LaunchedEffect(client) {
         var attempt = 0
         while (isActive) {
             attempt++
+            val port = PREVIEW_PORTS[(attempt - 1) % PREVIEW_PORTS.size]
+            currentPort = port
+            if (!stream.isAlive()) stream.start()
+            stream.rebind(port)
             stream.resetCounters()
-            delay(300)
-            status = "Pidiendo la vista en vivo a la cámara… (intento $attempt)"
-            val startError = startPreview(client)
-            if (startError != null) {
-                status = "No se pudo iniciar la vista en vivo: $startError"
+            delay(700)
+            status = "Pidiendo la vista en vivo a la cámara… (intento $attempt, puerto $port)"
+            val result = startPreview(client, port)
+            if (result.error != null) {
+                status = "No se pudo iniciar la vista en vivo: ${result.error}"
                 delay(5_000)
                 continue
             }
+            startReply = result.reply
             status = "Esperando la imagen de la cámara… (intento $attempt)"
             var waited = 0
             while (waited < 12_000 && !stream.hasPicture()) {
@@ -534,12 +631,16 @@ fun LiveScreen(vm: AppVm) {
             }
             while (isActive && stream.hasPicture()) delay(500)
             if (isActive) {
-                status = if (stream.bytes.get() == 0L) {
-                    "No llegan datos de la cámara. Reintentando…"
-                } else {
-                    "Llegan datos pero no se pudo mostrar la imagen. Reintentando…"
+                val cam = vm.state?.status
+                status = when {
+                    stream.bytes.get() > 0L -> "Llegan datos pero no se pudo mostrar la imagen. Reintentando…"
+                    cam != null && cam[55] == 0L ->
+                        "La cámara informa que la vista previa no está disponible con el modo o los ajustes actuales. Reintentando…"
+                    attempt >= 3 ->
+                        "La cámara aceptó la vista previa pero no envía datos. Si sigue igual, apaga y enciende la cámara. Reintentando…"
+                    else -> "No llegan datos de la cámara. Reintentando…"
                 }
-                delay(1_500)
+                delay(2_500)
             }
         }
     }
@@ -548,7 +649,16 @@ fun LiveScreen(vm: AppVm) {
     LaunchedEffect(stream) {
         while (true) {
             hasPicture = stream.hasPicture()
-            diag = stream.summary()
+            val cam = vm.state?.status
+            diag = buildString {
+                append(stream.summary())
+                append("\nTV ${localIps.ifEmpty { "?" }} → cámara ${client.config.host} · puerto $currentPort")
+                if (cam != null) {
+                    append("\nCámara: vista previa activa ${flag(cam[32])} · disponible ${flag(cam[55])}")
+                    append(" · grabando ${flag(cam[10])}")
+                }
+                if (startReply.isNotEmpty()) append(" · respuesta $startReply")
+            }
             if (stream.videoWidth > 0 && stream.videoHeight > 0) {
                 aspect = stream.videoWidth.toFloat() / stream.videoHeight.toFloat()
             }
